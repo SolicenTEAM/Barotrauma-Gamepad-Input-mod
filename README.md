@@ -3,7 +3,7 @@ This mod adds gamepad controls and vibration to the game.<br>
 *Doesn't work with Steam Input or Steam Remote Play*
 
 * This is repository of the mod in Steam Workshop - **Gamepad Input for Barotrauma**
-* If you want to help us in develop this mod, you can create issue or fork of this repo and take your changes to this.
+* If you want to help us in develop this mod, you can create issue or fork of this repo and take your pull request to changes this.
 
 Read full readme in Steam Workshop page.
 
