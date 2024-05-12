@@ -487,12 +487,10 @@ namespace GamePadInput
 					//InputEmulator.KeyUp (GKey.Left);
 					//InputEmulator.KeyUp (GKey.Up);
 					//InputEmulator.KeyUp (GKey.Right);
-					break;
+					break;	
 				default:
-					moveRelease();
-					break;
+					moveRelease(); break;
 			}
-
 		}
 		void moveRelease()
 		{
@@ -518,14 +516,10 @@ namespace GamePadInput
 			}
 
 			int result = -1;
-			if (leftStickX < 0)
-				result = 0;
-			if (leftStickX > 0)
-				result = 2;
-			if (leftStickY > 0)
-				result = 1;
-			if (leftStickY < 0)
-				result = 3;
+			if (leftStickX < -0.8) result = 0;
+			if (leftStickX > 0.8) result = 2;
+			if (leftStickY > 0.8) result = 1;
+			if (leftStickY < -0.8) result = 3;
 			return result;
 		}
 
