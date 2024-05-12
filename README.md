@@ -1,4 +1,4 @@
-# [Gamepad Input for Barotrauma](https://steamcommunity.com/sharedfiles/filedetails/?id=2967824521&tscn=1715470008)
+# [Gamepad Input for Barotrauma](https://steamcommunity.com/sharedfiles/filedetails/?id=2967824521)
 This mod adds gamepad controls and vibration to the game.<br>
 *Doesn't work with Steam Input or Steam Remote Play*
 
