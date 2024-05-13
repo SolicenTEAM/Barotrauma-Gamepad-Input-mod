@@ -100,7 +100,7 @@ namespace GamePadInput
 			Character lastCharacter = null;
 			float lastHp = 100;
 
-			LuaCsLogger.LogMessage("Initialization GamepadInput Mod");
+			LuaCsLogger.LogMessage("——— Initialization GamepadInput Mod ———");
 			GameMain.LuaCs.Hook.HookMethod("gamepad_hook",
 				typeof(PlayerInput).GetMethod("Update"),
 				(object self, Dictionary<string, object> args) =>
@@ -237,7 +237,6 @@ namespace GamePadInput
 							{
 								if (!flagBack)
 								{
-									//InputEmulator.KeyPress(Keys.Tab);
 									InputEmulator.KeyPress(GKey.InfoTab);
 									flagBack = true;
 								}
@@ -452,11 +451,7 @@ namespace GamePadInput
 					return true;
 				}, LuaCsHook.HookMethodType.After, this);
 		}
-
-		bool w = true;
-		bool a = true;
-		bool s = true;
-		bool d = true;
+		
 		public void Move(GamePadState gamePad, bool type)
 		{
 			int way = getStickWay(gamePad, type);
@@ -466,27 +461,17 @@ namespace GamePadInput
 			{
 				case 0:
 					InputEmulator.KeyDown(GKey.Left);
-					//InputEmulator.KeyUp (GKey.Down);
-					//InputEmulator.KeyUp (GKey.Up);
 					InputEmulator.KeyUp(GKey.Right);
 					break;
 				case 1:
 					InputEmulator.KeyDown(GKey.Up);
-					//InputEmulator.KeyUp (GKey.Down);
-					//InputEmulator.KeyUp (GKey.Left);
-					//InputEmulator.KeyUp (GKey.Right);
 					break;
 				case 2:
 					InputEmulator.KeyDown(GKey.Right);
-					//InputEmulator.KeyUp (GKey.Down);
 					InputEmulator.KeyUp(GKey.Left);
-					//InputEmulator.KeyUp (GKey.Up);
 					break;
 				case 3:
 					InputEmulator.KeyDown(GKey.Down);
-					//InputEmulator.KeyUp (GKey.Left);
-					//InputEmulator.KeyUp (GKey.Up);
-					//InputEmulator.KeyUp (GKey.Right);
 					break;	
 				default:
 					moveRelease(); break;
@@ -517,8 +502,8 @@ namespace GamePadInput
 
 			int result = -1;
 			if (leftStickX < -0.8) result = 0;
-			if (leftStickX > 0.8) result = 2;
-			if (leftStickY > 0.8) result = 1;
+			if (leftStickX >  0.8) result = 2;
+			if (leftStickY >  0.8) result = 1;
 			if (leftStickY < -0.8) result = 3;
 			return result;
 		}
