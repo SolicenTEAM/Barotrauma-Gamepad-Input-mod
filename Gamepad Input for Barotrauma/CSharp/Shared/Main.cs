@@ -1,542 +1,297 @@
 using System;
-using System.Collections.Generic;
-using System.Diagnostics;
-using System.Linq;
 using System.Runtime.InteropServices;
-using System.Threading;
-using System.Threading.Tasks;
+using Steamworks;
+using System.Reflection;
+using System.Linq;
 using Barotrauma;
+using System.Collections.Generic;
 using Microsoft.Xna.Framework;
 using Microsoft.Xna.Framework.Graphics;
 using Microsoft.Xna.Framework.Input;
-//using GBF = SharpDX.XInput.GamepadButtonFlags;
-
-namespace GamePadInput
+using Barotrauma.Extensions;
+using EventInput;
+partial class TestHook : ACsMod
 {
-	partial class GamePadHook : ACsMod
+	[DllImport("user32.dll", EntryPoint = "SetCursorPos")]
+	[
+				return: MarshalAs(UnmanagedType.Bool)
+			]
+	private static extern bool SetCursorPos(int x, int y);
+
+	[DllImport("user32.dll")]
+	[
+		return: MarshalAs(UnmanagedType.Bool)
+	]
+	private static extern bool GetCursorPos(out MousePoint lpMousePoint);
+
+	[DllImport("user32.dll")]
+	private static extern void mouse_event(int dwFlags, int dx, int dy, int dwData, int dwExtraInfo);
+
+
+	public override void Stop()
+	{
+		// stopping code, e.g. save custom data
+#if SERVER
+			// server-side code
+#elif CLIENT
+			// client-side code
+#endif
+	}
+	public TestHook()
 	{
 
-		// Import the user32.dll
-		[DllImport("user32.dll")]
-		static extern void keybd_event(byte bVk, byte bScan, int dwFlags, int dwExtraInfo);
+		bool flagA = false;
 
-		[DllImport("user32.dll", EntryPoint = "SetCursorPos")]
-		[
-			return :MarshalAs(UnmanagedType.Bool)
-		]
-		private static extern bool SetCursorPos(int x, int y);
+		bool lockCursor = true;
+		bool isModActive = true;
+		bool flagActiveCombo = false;
 
-		[DllImport("user32.dll")]
-		[
-			return :MarshalAs(UnmanagedType.Bool)
-		]
-		private static extern bool GetCursorPos(out MousePoint lpMousePoint);
+		float CursorX = 0;
+		float CursorY = 0;
+		int CursorRadius = 175;
+		int CursorSpeed = 20;
 
-		[DllImport("user32.dll")]
-		private static extern void mouse_event(int dwFlags, int dx, int dy, int dwData, int dwExtraInfo);
+		int ScreenWidth = GameMain.GraphicsWidth;
+		int ScreenHeight = GameMain.GraphicsHeight;
+		int ScreenCenterX = ScreenWidth / 2;
+		int ScreenCenterY = ScreenHeight / 2;
 
-		// Declare some keyboard keys as constants with its respective code
-		// See Virtual Code Keys: https://msdn.microsoft.com/en-us/library/dd375731(v=vs.85).aspx
-		public const int KEYEVENTF_EXTENDEDKEY = 0x0001; //Key down flag
-		public const int KEYEVENTF_KEYUP = 0x0002; //Key up flag
-		public const int VK_TAB = 0x09; //Right Control key code
 
-		public static readonly List<Keys> NumberKeys = new List<Keys> { Keys.D0, Keys.D1, Keys.D2, Keys.D3, Keys.D4, Keys.D5, Keys.D6, Keys.D7, Keys.D8, Keys.D9 };
+		SteamInput.RunFrame();
+		Character lastCharacter = null;
 
-		public override void Stop()
-		{
-			// stopping code, e.g. save custom data
-			#if SERVER
-			// server-side code
-			#elif CLIENT
-			// client-side code
-			#endif
-		}
-		public GamePadHook()
-		{
-			bool lockCursor = true;
-			bool isModActive = false;
-			bool flagActiveCombo = false;
+		LuaCsLogger.LogError("StartHook");
+		SteamManager.Init_SteamInput();
+		SteamManager.GetAllControlles();
 
-			bool lockCroth = false;
+		Vector2 targetMovement = Vector2.Zero;
 
-			bool flagDLeft = false;
-			bool flagDUp = false;
-			bool flagDRight = false;
-			bool flagDDown = false;
+		var controller = SteamInput.Controllers.ToList()[0];
 
-			bool flagStart = false;
-			bool flagBack = false;
 
-			bool flagB = false;
-			bool flagX = false;
-			bool flagY = false;
-			bool flagA = false;
+		GameMain.LuaCs.Hook.HookMethod("gamepad_hook",
+			typeof(PlayerInput).GetMethod("Update"),
+			(object self, Dictionary<string, object> args) =>
+			{
+				bool keyJ = PlayerInput.KeyDown(Keys.J);
+				bool keyAlt = PlayerInput.KeyDown(Keys.LeftAlt);
+				//LuaCsLogger.LogMessage($"isModActive: {isModActive}");
 
-			bool flagRB = false;
-			bool flagLB = false;
-
-			bool flagLS = false;
-			bool flagRS = false;
-
-			bool mLb = false;
-			bool mRb = false;
-
-			float CursorX = 0;
-			float CursorY = 0;
-			int CursorRadius = 175;
-			int CursorSpeed = 20;
-
-			int ScreenWidth = GameMain.GraphicsWidth;
-			int ScreenHeight = GameMain.GraphicsHeight;
-			int ScreenCenterX = ScreenWidth / 2;
-			int ScreenCenterY = ScreenHeight / 2;
-
-			int slot = 0;
-
-			GamePadState gamePad = GamePad.GetState(0);
-			KeyboardState keyboard = Keyboard.GetState();
-
-			Character lastCharacter = null;
-			float lastHp = 100;
-
-			LuaCsLogger.LogMessage("——— Initialization GamepadInput Mod ———");
-			GameMain.LuaCs.Hook.HookMethod("gamepad_hook",
-				typeof(PlayerInput).GetMethod("Update"),
-				(object self, Dictionary<string, object> args) =>
+				if (keyJ && keyAlt)
 				{
-					if (Character.Controlled != null)
+					if (!flagActiveCombo)
 					{
-						//LuaCsLogger.LogMessage ($"{Character.Controlled}");
-						//LuaCsLogger.LogMessage ($"{GamePad.GetCapabilities(0)}");
+						isModActive = !isModActive;
+						flagActiveCombo = true;
+						LuaCsLogger.LogMessage("Mod active: " + isModActive.ToString());
+					}
+				}
+				else
+				{
+					flagActiveCombo = false;
+				}
 
-						bool keyJ = PlayerInput.KeyDown(Keys.J);
-						bool keyAlt = PlayerInput.KeyDown(Keys.LeftAlt);
-						//LuaCsLogger.LogMessage($"isModActive: {isModActive}");
+				if (isModActive && GameMain.WindowActive)
+				{
+					bool isSelected = Character.Controlled.SelectedItem != null ? true : false;
+					bool inMenu = false;
+					bool inCM = CrewManager.IsCommandInterfaceOpen;
 
-						if (keyJ && keyAlt)
+
+					bool AButton = (controller.GetDigitalState("atack").Pressed); // A button
+					if (AButton)
+					{
+						InputEmulator.Mouse.LeftDown();
+						flagA = true;
+					}
+					else
+					{
+						if (flagA)
 						{
-							Console.Beep();
-							if (!flagActiveCombo)
-							{
-								isModActive = !isModActive;
-								flagActiveCombo = true;
-							}
-						}
-						else
-						{
-							flagActiveCombo = false;
-						}
-
-						bool isSelected = Character.Controlled.SelectedItem != null ? true : false;
-						bool inMenu = false;
-						bool inCM = CrewManager.IsCommandInterfaceOpen;
-						if (!isSelected
-							&& !GUI.PauseMenuOpen && !GUI.SettingsMenuOpen
-							&& !GameSession.IsTabMenuOpen && !GUI.InputBlockingMenuOpen
-							&& !(CharacterHealth.OpenHealthWindow != null) && !ConversationAction.IsDialogOpen)
-							inMenu = false;
-						else
-							inMenu = true;
-
-						gamePad = GamePad.GetState(0); // get state of gamepad
-
-						if (gamePad.IsConnected && GameMain.WindowActive)
-						{
-
-							#region Gamepad Input
-							bool StartButton = (gamePad.Buttons.Start == ButtonState.Pressed); // Start button
-							bool BackButton = (gamePad.Buttons.Back == ButtonState.Pressed); // Back button 
-							bool LStButton = (gamePad.Buttons.LeftStick == ButtonState.Pressed); // Left stick button
-							bool RStButton = (gamePad.Buttons.RightStick == ButtonState.Pressed); // Right stick button	
-							bool AButton = (gamePad.Buttons.A == ButtonState.Pressed); // A button
-							bool BButton = (gamePad.Buttons.B == ButtonState.Pressed); // B button
-							bool XButton = (gamePad.Buttons.X == ButtonState.Pressed); // X button
-							bool YButton = (gamePad.Buttons.Y == ButtonState.Pressed); // Y button
-
-							float LTrigger = gamePad.Triggers.Left;
-							float RTrigger = gamePad.Triggers.Right;
-							bool RBButton = (gamePad.Buttons.RightShoulder == ButtonState.Pressed); // RB button
-							bool LBButton = (gamePad.Buttons.LeftShoulder == ButtonState.Pressed); // LB button
-
-							// DPad
-							bool DPadLeftButton = (gamePad.DPad.Left == ButtonState.Pressed);
-							bool DPadUpButton = (gamePad.DPad.Up == ButtonState.Pressed);
-							bool DPadRightButton = (gamePad.DPad.Right == ButtonState.Pressed);
-							bool DPadDownButton = (gamePad.DPad.Down == ButtonState.Pressed);
-							#endregion
-
-							// Activation using a gamepad
-							if (LBButton && RBButton && DPadDownButton && AButton)
-							{
-								isModActive = !isModActive;
-								
-								flagActiveCombo = isModActive;
-								Console.Beep();
-								
-								LuaCsLogger.LogMessage("GamepadMod State: - " + isModActive);
-								InputEmulator.KeyUp(Keys.Tab);
-								InputEmulator.KeyUp(Keys.CapsLock);
-								InputEmulator.KeyUp(Keys.LeftControl);
-								InputEmulator.KeyUp(Keys.LeftShift);
-								return true;
-							}
-
-							if (!isModActive) return true;
-							if (lastHp != Character.Controlled.Health)
-							{
-								//LuaCsLogger.LogMessage ($"HIT! {lastHp}=>{Character.Controlled.Health}");
-								Vibrate();
-								lastHp = Character.Controlled.Health;
-							}
-							//
-							lastCharacter = Character.Controlled;
-							lastHp = lastCharacter.Health;
-
-							float rightStickX = 0;
-							float rightStickY = 0;
-
-							if (!inMenu)
-							{
-								rightStickX = gamePad.ThumbSticks.Right.X;
-								rightStickY = gamePad.ThumbSticks.Right.Y;
-								Move(gamePad, true);
-							}
-							else
-							{
-								rightStickX = gamePad.ThumbSticks.Left.X;
-								rightStickY = gamePad.ThumbSticks.Left.Y;
-								Move(gamePad, false);
-							}
-
-							CursorX += rightStickX * CursorSpeed;
-							CursorY += rightStickY * -1 * CursorSpeed;
-
-							if ((!inMenu && lockCursor) && !inCM)
-							{
-								CursorX = Math.Clamp(CursorX, ScreenCenterX - CursorRadius / 2, ScreenCenterX + CursorRadius / 2);
-								CursorY = Math.Clamp(CursorY, ScreenCenterY - CursorRadius / 2, ScreenCenterY + CursorRadius / 2);
-							}
-
-							SetCursorPosition((int) CursorX, (int) CursorY);
-
-							if (StartButton)
-							{
-								if (!flagStart)
-								{
-									InputEmulator.KeyPress(Keys.Escape);
-									flagStart = true;
-								}
-							}
-							else
-							{
-								flagStart = false;
-							}
-
-							if (BackButton)
-							{
-								if (!flagBack)
-								{
-									InputEmulator.KeyPress(GKey.InfoTab);
-									flagBack = true;
-								}
-							}
-							else
-							{
-								flagBack = false;
-							}
-
-							if (LStButton)
-							{
-								InputEmulator.KeyDown(GKey.Run);
-								flagLS = true;
-							}
-							else
-							{
-								if (flagLS)
-								{
-									InputEmulator.KeyUp(GKey.Run);
-									flagLS = false;
-								}
-
-							}
-
-							if (RStButton)
-							{
-								if (!flagRS)
-								{
-									InputEmulator.Mouse.PressMouseButton(2);
-									flagRS = true;
-								}
-							}
-							else
-							{
-								flagRS = false;
-							}
-
-							if (AButton)
-							{
-								InputEmulator.Mouse.LeftDown();
-								flagA = true;
-							}
-							else
-							{
-								if (flagA)
-								{
-									InputEmulator.Mouse.LeftUp();
-									flagA = false;
-								}
-							}
-
-							if (BButton)
-							{
-								if (!flagB)
-								{
-									if (!inMenu && !inCM)
-										InputEmulator.KeyPress(GKey.Use);
-									else
-										InputEmulator.KeyPress(Keys.Escape);
-
-									flagB = true;
-								}
-							}
-							else
-							{
-								flagB = false;
-							}
-
-							if (XButton)
-							{
-								if (!flagX)
-								{
-									InputEmulator.KeyPress(GKey.Health);
-									flagX = true;
-								}
-							}
-							else
-							{
-								flagX = false;
-							}
-							if (YButton)
-							{
-								if (!flagY)
-								{
-									InputEmulator.KeyPress(GKey.Grab);
-									flagY = true;
-								}
-							}
-							else
-							{
-								flagY = false;
-							}
-
-							if (RTrigger == 1)
-							{
-								InputEmulator.Mouse.LeftDown();
-								mLb = true;
-							}
-							else
-							{
-								if (mLb)
-								{
-									InputEmulator.Mouse.LeftUp();
-									mLb = false;
-								}
-							}
-							if (LTrigger == 1)
-							{
-								InputEmulator.Mouse.RightDown();
-								mRb = true;
-							}
-							else
-							{
-								if (mRb)
-								{
-									InputEmulator.Mouse.RightUp();
-									mRb = false;
-								}
-							}
-
-							if (RBButton)
-							{
-								if (!flagRB)
-								{
-									slot++;
-									if (slot > 9) slot = 0;
-									InputEmulator.KeyPress(NumberKeys[slot]);
-									flagRB = true;
-								}
-							}
-							else
-							{
-								flagRB = false;
-							}
-
-							if (LBButton)
-							{
-								if (!flagLB)
-								{
-									slot--;
-									if (slot < 0) slot = 9;
-									InputEmulator.KeyPress(NumberKeys[slot]);
-									flagLB = true;
-								}
-							}
-							else
-							{
-								flagLB = false;
-							}
-
-							if (DPadLeftButton)
-							{
-								InputEmulator.KeyDown(GKey.Ragdoll);
-								flagDLeft = true;
-							}
-							else
-							{
-								if (flagDLeft)
-								{
-									InputEmulator.KeyUp(GKey.Ragdoll);
-									flagDLeft = false;
-								}
-							}
-
-							if (DPadUpButton)
-							{
-								if (!flagDUp)
-								{
-									lockCursor = !lockCursor;
-									flagDUp = true;
-								}
-							}
-							else
-							{
-								flagDUp = false;
-							}
-							if (DPadRightButton)
-							{
-								if (!flagDRight)
-								{
-									InputEmulator.KeyPress(GKey.CrewOrders);
-									flagDRight = true;
-								}
-							}
-							else
-							{
-								flagDRight = false;
-							}
-							if (DPadDownButton)
-							{
-								if (flagDDown)
-								{
-									lockCroth = !lockCroth;
-									flagDDown = false;
-								}
-							}
-							else
-							{
-								flagDDown = true;
-							}
-							if (lockCroth)
-							{
-								InputEmulator.KeyDown(GKey.Crouch);
-							}
-							else
-							{
-								InputEmulator.KeyUp(GKey.Crouch);
-							}
-
+							InputEmulator.Mouse.LeftUp();
+							flagA = false;
 						}
 					}
-					return true;
-				}, LuaCsHook.HookMethodType.After, this);
-		}
-		
-		public void Move(GamePadState gamePad, bool type)
-		{
-			int way = getStickWay(gamePad, type);
 
-			//LuaCsLogger.LogMessage ($"way : {way}");
-			switch (way)
+					if (!isSelected &&
+							!GUI.PauseMenuOpen && !GUI.SettingsMenuOpen &&
+							!GameSession.IsTabMenuOpen && !GUI.InputBlockingMenuOpen &&
+							!(CharacterHealth.OpenHealthWindow != null) && !ConversationAction.IsDialogOpen)
+						inMenu = false;
+					else
+						inMenu = true;
+
+
+					float CamY = controller.GetAnalogState("camera").Y;
+					float CamX = controller.GetAnalogState("camera").X;
+
+					float MoveX = controller.GetAnalogState("move").X;
+					float MoveY = controller.GetAnalogState("move").Y;
+
+					/*
+										LuaCsLogger.LogMessage("CAM: " + CamX.ToString() + " : " + CamY.ToString());
+										LuaCsLogger.LogMessage("MOVE: " + MoveX.ToString() + " : " + MoveY.ToString());*/
+
+
+					CursorX += CamX * CursorSpeed;
+					CursorY += CamY * -1 * CursorSpeed;
+
+					if ((!inMenu && lockCursor) && !inCM)
+					{
+						CursorX = Math.Clamp(CursorX, ScreenCenterX - CursorRadius / 2, ScreenCenterX + CursorRadius / 2);
+						CursorY = Math.Clamp(CursorY, ScreenCenterY - CursorRadius / 2, ScreenCenterY + CursorRadius / 2);
+					}
+					SetCursorPosition((int)CursorX, (int)CursorY);
+
+				}
+
+				return true;
+			}, LuaCsHook.HookMethodType.After, this);
+
+
+		GameMain.LuaCs.Hook.HookMethod("gamepad_hook",
+			typeof(Character).GetMethod("Control"),
+			(object self, Dictionary<string, object> args) =>
 			{
-				case 0:
-					InputEmulator.KeyDown(GKey.Left);
-					InputEmulator.KeyUp(GKey.Right);
-					break;
-				case 1:
-					InputEmulator.KeyDown(GKey.Up);
-					break;
-				case 2:
-					InputEmulator.KeyDown(GKey.Right);
-					InputEmulator.KeyUp(GKey.Left);
-					break;
-				case 3:
-					InputEmulator.KeyDown(GKey.Down);
-					break;	
-				default:
-					moveRelease(); break;
+
+				// Получение данных о нажатиях кнопок для всех подключенных контроллеров
+				for (int i = 0; i < SteamInput.Controllers.ToList().Count; i++)
+				{
+					//var controller = SteamInput.Controllers.ToList()[i];
+					float x = controller.GetAnalogState("move").X;
+					float y = controller.GetAnalogState("move").Y;
+
+					bool run = controller.GetDigitalState("run").Pressed;
+					bool jump = controller.GetDigitalState("atack").Pressed;
+					targetMovement.X = x;
+					targetMovement.Y = y;
+
+					bool run_ = false;
+					if ((run && Character.Controlled.AnimController.ForceSelectAnimationType == AnimationType.NotDefined) || Character.Controlled.ForceRun)
+					{
+						run_ = Character.Controlled.CanRun;
+					}
+
+					Vector2 targetMovement1 = Character.Controlled.ApplyMovementLimits(targetMovement, Character.Controlled.AnimController.GetCurrentSpeed(run));
+					Character.Controlled.AnimController.TargetMovement = targetMovement1;
+					Character.Controlled.AnimController.IgnorePlatforms = Character.Controlled.AnimController.TargetMovement.Y < -0.1f;
+
+				}
+				return true;
+			}, LuaCsHook.HookMethodType.After, this);
+	}
+	public static void SetCursorPosition(int x, int y)
+	{
+		SetCursorPos(x, y);
+	}
+	public static MousePoint GetCursorPosition()
+	{
+		MousePoint currentMousePoint;
+		var gotPoint = GetCursorPos(out currentMousePoint);
+		if (!gotPoint) { currentMousePoint = new MousePoint(0, 0); }
+		return currentMousePoint;
+	}
+
+	[StructLayout(LayoutKind.Sequential)]
+	public struct MousePoint
+	{
+		public int X;
+		public int Y;
+
+		public MousePoint(int x, int y)
+		{
+			X = x;
+			Y = y;
+		}
+	}
+}
+
+
+public class SteamManager
+{
+	public static void Init()
+	{
+		// Инициализация Steam Input была успешной
+		GetAllControlles();
+	}
+
+	public static void Shutdown()
+	{
+		SteamClient.Shutdown();
+	}
+
+	public static void Init_SteamInput() // Прозвонка SteamInput.Internal.Init() для активации SteamInput, по советам с Github.
+	{
+		try
+		{
+			// Получение типа SteamInput
+			Type steamInputType = typeof(SteamInput);
+
+			// Получение внутреннего свойства Internal
+			PropertyInfo internalProperty = steamInputType.GetProperty("Internal", BindingFlags.NonPublic | BindingFlags.Static);
+			if (internalProperty == null)
+			{
+				LuaCsLogger.LogError("Failed to find Internal property.");
+				return;
 			}
-		}
-		void moveRelease()
-		{
-			InputEmulator.KeyUp(GKey.Up);
-			InputEmulator.KeyUp(GKey.Left);
-			InputEmulator.KeyUp(GKey.Down);
-			InputEmulator.KeyUp(GKey.Right);
-		}
-		public int getStickWay(GamePadState gamePad, bool type)
-		{
-			float leftStickX = 0;
-			float leftStickY = 0;
-			if (type)
+
+			// Получение значения свойства Internal
+			var internalInstance = internalProperty.GetValue(null);
+			if (internalInstance == null)
 			{
-				leftStickX = gamePad.ThumbSticks.Left.X;
-				leftStickY = gamePad.ThumbSticks.Left.Y;
+				LuaCsLogger.LogError("[GInput] Internal property returned null.");
+				return;
+			}
+
+			// Получение метода Init у объекта Internal
+			MethodInfo initMethod = internalInstance.GetType().GetMethod("Init", BindingFlags.NonPublic | BindingFlags.Instance);
+			if (initMethod == null)
+			{
+				LuaCsLogger.LogError("[GInput] Failed to find Init method.");
+				return;
+			}
+
+			// Вызов метода Init с параметром false
+			bool result = (bool)initMethod.Invoke(internalInstance, new object[] { false });
+			if (result)
+			{
+				LuaCsLogger.LogMessage("[GInput] Steam Input initialized successfully.");
 			}
 			else
 			{
-
-				leftStickX = gamePad.ThumbSticks.Right.X;
-				leftStickY = gamePad.ThumbSticks.Right.Y;
+				LuaCsLogger.LogError("[GInput] Failed to initialize Steam Input.");
 			}
-
-			int result = -1;
-			if (leftStickX < -0.8) result = 0;
-			if (leftStickX >  0.8) result = 2;
-			if (leftStickY >  0.8) result = 1;
-			if (leftStickY < -0.8) result = 3;
-			return result;
+		}
+		catch (Exception ex)
+		{
+			LuaCsLogger.LogError($"Exception during SteamInput initialization: {ex.Message}");
 		}
 
-		public static void SetCursorPosition(int x, int y)
-		{
-			SetCursorPos(x, y);
-		}
-		public static MousePoint GetCursorPosition()
-		{
-			MousePoint currentMousePoint;
-			var gotPoint = GetCursorPos(out currentMousePoint);
-			if (!gotPoint) { currentMousePoint = new MousePoint(0, 0); }
-			return currentMousePoint;
-		}
+	}
 
-		[StructLayout(LayoutKind.Sequential)]
-		public struct MousePoint
+	public static void GetAllControlles()
+	{
+		foreach (var controller in SteamInput.Controllers.ToList())
 		{
-			public int X;
-			public int Y;
+			LuaCsLogger.LogMessage($"[GInput] {controller.ToString()}");
+		}
+	}
 
-			public MousePoint(int x, int y)
+	public static void Update()
+	{
+		SteamInput.RunFrame();
+
+		// Получение данных о нажатиях кнопок для всех подключенных контроллеров
+		for (int i = 0; i < SteamInput.Controllers.ToList().Count; i++)
+		{
+			var controller = SteamInput.Controllers.ToList()[i];
+			bool use = controller.GetDigitalState("use").Pressed;
+			bool jump = controller.GetDigitalState("jump").Pressed;
+			if (use || jump)
 			{
-				X = x;
-				Y = y;
+				LuaCsLogger.LogMessage("[GInput] pressed!");
+				// Здесь можно добавить логику обработки нажатия кнопки
 			}
-		}
-		public async void Vibrate()
-		{
-			GamePad.SetVibration(0, 1f, 1f); // make the controller rumble
-			await Task.Delay(500);
-			GamePad.SetVibration(0, 0, 0); // make the controller rumble
 		}
 	}
 
