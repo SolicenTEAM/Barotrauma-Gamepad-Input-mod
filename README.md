@@ -9,7 +9,7 @@ Read full readme in Steam Workshop page.
 
 ## Our goals:
 - [x] Create UI and options for detailed customization of your input control in game.
-- [ ] Replace old XNA Input in MonoGame to hook Steam Input directly and full support all controllers based on Steam Input.
+- [X] Replace old XNA Input in MonoGame to hook Steam Input directly and full support all controllers based on Steam Input.
 
 ## Roadmap:
 
