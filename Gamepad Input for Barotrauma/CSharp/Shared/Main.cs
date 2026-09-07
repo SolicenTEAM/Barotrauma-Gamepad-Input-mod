@@ -1,543 +1,566 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
-using System.Linq;
-using System.Runtime.InteropServices;
-using System.Threading;
-using System.Threading.Tasks;
 using Barotrauma;
+using HarmonyLib;
 using Microsoft.Xna.Framework;
-using Microsoft.Xna.Framework.Graphics;
 using Microsoft.Xna.Framework.Input;
-//using GBF = SharpDX.XInput.GamepadButtonFlags;
 
 namespace GamePadInput
 {
-	partial class GamePadHook : ACsMod
-	{
+    internal class GamePadHook : ACsMod
+    {
+        public const string HarmonyId = "GamePadInput.Barotrauma";
 
-		// Import the user32.dll
-		[DllImport("user32.dll")]
-		static extern void keybd_event(byte bVk, byte bScan, int dwFlags, int dwExtraInfo);
+        private const float GyroBaseSpeed = 15f;
+        private static readonly Stopwatch Clock = Stopwatch.StartNew();
 
-		[DllImport("user32.dll", EntryPoint = "SetCursorPos")]
-		[
-			return :MarshalAs(UnmanagedType.Bool)
-		]
-		private static extern bool SetCursorPos(int x, int y);
+        private Harmony harmony;
+        private readonly ModConfig config;
+        private readonly OptionsUI optionsUI;
 
-		[DllImport("user32.dll")]
-		[
-			return :MarshalAs(UnmanagedType.Bool)
-		]
-		private static extern bool GetCursorPos(out MousePoint lpMousePoint);
+        private readonly SdlPadBackend sdlBackend = new SdlPadBackend();
+        private readonly MonoPadBackend monoBackend = new MonoPadBackend();
+        private IPadBackend padBackend;
+        private float backendRetryTimer;
 
-		[DllImport("user32.dll")]
-		private static extern void mouse_event(int dwFlags, int dx, int dy, int dwData, int dwExtraInfo);
+        private bool isModActive;
+        private bool isStopped;
+        private bool lockCursor = true;
+        private bool lockCrouch;
+        private int slot;
+        private int appliedBackendMode = -1;
 
-		// Declare some keyboard keys as constants with its respective code
-		// See Virtual Code Keys: https://msdn.microsoft.com/en-us/library/dd375731(v=vs.85).aspx
-		public const int KEYEVENTF_EXTENDEDKEY = 0x0001; //Key down flag
-		public const int KEYEVENTF_KEYUP = 0x0002; //Key up flag
-		public const int VK_TAB = 0x09; //Right Control key code
+        private bool altJHeld;
+        private bool comboHeld;
+        private bool prevRawEscape;
+        private float escapeHoldTimer;
+        private bool escapeLongPressDone;
+        private readonly SlotWheel slotWheel = new SlotWheel();
+        private bool wheelOpen;
+        private bool wheelStickReady;
+        private double wheelLastChange;
 
-		public static readonly List<Keys> NumberKeys = new List<Keys> { Keys.D0, Keys.D1, Keys.D2, Keys.D3, Keys.D4, Keys.D5, Keys.D6, Keys.D7, Keys.D8, Keys.D9 };
+        private readonly Dictionary<GPadButton, bool> prevButtons = new Dictionary<GPadButton, bool>();
 
-		public override void Stop()
-		{
-			// stopping code, e.g. save custom data
-			#if SERVER
-			// server-side code
-			#elif CLIENT
-			// client-side code
-			#endif
-		}
-		public GamePadHook()
-		{
-			bool lockCursor = true;
-			bool isModActive = false;
-			bool flagActiveCombo = false;
+        private Character lastCharacter;
+        private float lastHp = 100f;
+        private double rumbleUntil;
+        private double lastFrameTime = -1.0;
+        private bool steamInputHintShown;
 
-			bool lockCroth = false;
+        public GamePadHook()
+        {
+            try
+            {
+                harmony = new Harmony(HarmonyId);
+                VirtualInput.ApplyPatches(harmony);
 
-			bool flagDLeft = false;
-			bool flagDUp = false;
-			bool flagDRight = false;
-			bool flagDDown = false;
+                config = ModConfig.Load();
+                padBackend = SelectBackend();
+                if (padBackend == null) { padBackend = monoBackend; }
+                appliedBackendMode = config.BackendMode;
+                optionsUI = new OptionsUI(config, () => padBackend.Poll());
+                OptionsUI.BackendName = padBackend.Name;
+                OptionsUI.ToggleRequested = () => optionsUI.Toggle();
+                PauseMenuButton.Apply(harmony);
+            }
+            catch (Exception e)
+            {
+                LuaCsLogger.LogMessage("GamepadInput: init failed:\n" + e);
+                throw;
+            }
 
-			bool flagStart = false;
-			bool flagBack = false;
+            LuaCsLogger.LogMessage("——— GamepadInput: initialized (input backend: " + padBackend.Name + ") ———");
+            GameMain.LuaCs.Hook.HookMethod("gamepad_hook",
+                typeof(PlayerInput).GetMethod("Update"),
+                (object self, Dictionary<string, object> args) =>
+                {
+                    if (!isStopped) { Update(); }
+                    return true;
+                },
+                LuaCsHook.HookMethodType.After, this);
+        }
 
-			bool flagB = false;
-			bool flagX = false;
-			bool flagY = false;
-			bool flagA = false;
+        public override void Stop()
+        {
+            isStopped = true;
+            OptionsUI.ToggleRequested = null;
+            SteamGyro.Shutdown();
+            try { optionsUI?.Close(); } catch { }
+            try { VirtualInput.ReleaseAll(); } catch { }
+            try { padBackend?.StopRumble(); } catch { }
+            try { harmony?.UnpatchAll(HarmonyId); } catch { }
+            LuaCsLogger.LogMessage("——— GamepadInput: stopped ———");
+        }
 
-			bool flagRB = false;
-			bool flagLB = false;
+        private void Update()
+        {
+            double now = Clock.Elapsed.TotalSeconds;
+            float dt = lastFrameTime < 0.0 ? 0f : (float)Math.Min(now - lastFrameTime, 0.1);
+            lastFrameTime = now;
 
-			bool flagLS = false;
-			bool flagRS = false;
+            UpdateBackend(dt);
+            PadSnapshot pad = padBackend.Poll();
+            SteamGyro.Poll(now);
 
-			bool mLb = false;
-			bool mRb = false;
+            HandleActivation(pad);
 
-			float CursorX = 0;
-			float CursorY = 0;
-			int CursorRadius = 175;
-			int CursorSpeed = 20;
+            PauseMenuButton.UpdatePending();
 
-			int ScreenWidth = GameMain.GraphicsWidth;
-			int ScreenHeight = GameMain.GraphicsHeight;
-			int ScreenCenterX = ScreenWidth / 2;
-			int ScreenCenterY = ScreenHeight / 2;
+            bool wasStripped = VirtualInput.StripEscape;
+            bool rawEscapeHeld = VirtualInput.LastRealKeyboardState.IsKeyDown(Keys.Escape);
+            VirtualInput.StripEscape = optionsUI.IsOpen || (wasStripped && rawEscapeHeld);
 
-			int slot = 0;
+            if (optionsUI.IsOpen)
+            {
+                if (optionsUI.BuiltInPause && !GUI.PauseMenuOpen) { optionsUI.Discard(); }
+                else if (rawEscapeHeld && !prevRawEscape)
+                {
+                    if (optionsUI.IsCapturing) { optionsUI.CancelCapture(); }
+                    else { optionsUI.Close(); }
+                }
+            }
+            prevRawEscape = rawEscapeHeld;
 
-			GamePadState gamePad = GamePad.GetState(0);
-			KeyboardState keyboard = Keyboard.GetState();
+            GPadButton escapeButton = config.GetBinding("Escape");
+            if (pad.IsDown(escapeButton))
+            {
+                escapeHoldTimer += dt;
+                if (!escapeLongPressDone && escapeHoldTimer >= 0.6f)
+                {
+                    escapeLongPressDone = true;
+                    optionsUI.Toggle();
+                }
+            }
+            else
+            {
+                if (escapeHoldTimer > 0f)
+                {
+                    if (!escapeLongPressDone && escapeHoldTimer < 0.6f && !optionsUI.IsOpen) { VirtualInput.PressKey(Keys.Escape); }
+                    escapeHoldTimer = 0f;
+                    escapeLongPressDone = false;
+                }
+            }
 
-			Character lastCharacter = null;
-			float lastHp = 100;
+            if (PlayerInput.KeyHit(Keys.F8)) { optionsUI.Toggle(); }
 
-			LuaCsLogger.LogMessage("——— Initialization GamepadInput Mod ———");
-			GameMain.LuaCs.Hook.HookMethod("gamepad_hook",
-				typeof(PlayerInput).GetMethod("Update"),
-				(object self, Dictionary<string, object> args) =>
-				{
-					if (Character.Controlled != null)
-					{
-						//LuaCsLogger.LogMessage ($"{Character.Controlled}");
-						//LuaCsLogger.LogMessage ($"{GamePad.GetCapabilities(0)}");
+            if (!isModActive) { return; }
 
-						bool keyJ = PlayerInput.KeyDown(Keys.J);
-						bool keyAlt = PlayerInput.KeyDown(Keys.LeftAlt);
-						//LuaCsLogger.LogMessage($"isModActive: {isModActive}");
+            VirtualInput.Tick();
+            UpdateRumble();
 
-						if (keyJ && keyAlt)
-						{
-							Console.Beep();
-							if (!flagActiveCombo)
-							{
-								isModActive = !isModActive;
-								flagActiveCombo = true;
-							}
-						}
-						else
-						{
-							flagActiveCombo = false;
-						}
+            if (!pad.IsConnected || !GameMain.WindowActive)
+            {
+                VirtualInput.ReleaseHeld();
+                CancelSlotWheel();
+                return;
+            }
 
-						bool isSelected = Character.Controlled.SelectedItem != null ? true : false;
-						bool inMenu = false;
-						bool inCM = CrewManager.IsCommandInterfaceOpen;
-						if (!isSelected
-							&& !GUI.PauseMenuOpen && !GUI.SettingsMenuOpen
-							&& !GameSession.IsTabMenuOpen && !GUI.InputBlockingMenuOpen
-							&& !(CharacterHealth.OpenHealthWindow != null) && !ConversationAction.IsDialogOpen)
-							inMenu = false;
-						else
-							inMenu = true;
+            if (optionsUI.IsOpen)
+            {
+                HandleOpenUI(pad, dt);
+                return;
+            }
 
-						gamePad = GamePad.GetState(0); // get state of gamepad
+            Character controlled = Character.Controlled;
+            bool inMenu = IsInMenu(controlled);
+            bool inCommandMenu = CrewManager.IsCommandInterfaceOpen;
 
-						if (gamePad.IsConnected && GameMain.WindowActive)
-						{
+            bool a = pad.IsDown(GPadButton.A);
+            bool rb = pad.IsDown(GPadButton.RB);
+            bool lb = pad.IsDown(GPadButton.LB);
+            bool dpadDown = pad.IsDown(GPadButton.DPadDown);
+            bool comboActive = lb && rb && dpadDown && a;
 
-							#region Gamepad Input
-							bool StartButton = (gamePad.Buttons.Start == ButtonState.Pressed); // Start button
-							bool BackButton = (gamePad.Buttons.Back == ButtonState.Pressed); // Back button 
-							bool LStButton = (gamePad.Buttons.LeftStick == ButtonState.Pressed); // Left stick button
-							bool RStButton = (gamePad.Buttons.RightStick == ButtonState.Pressed); // Right stick button	
-							bool AButton = (gamePad.Buttons.A == ButtonState.Pressed); // A button
-							bool BButton = (gamePad.Buttons.B == ButtonState.Pressed); // B button
-							bool XButton = (gamePad.Buttons.X == ButtonState.Pressed); // X button
-							bool YButton = (gamePad.Buttons.Y == ButtonState.Pressed); // Y button
+            bool slotNextPressed = PressedEdge(pad, config.GetBinding("SlotNext"));
+            bool slotPrevPressed = PressedEdge(pad, config.GetBinding("SlotPrev"));
+            bool usePressed = PressedEdge(pad, config.GetBinding("Use"));
+            bool infoTabPressed = PressedEdge(pad, config.GetBinding("InfoTab"));
+            bool middleClickPressed = PressedEdge(pad, config.GetBinding("MiddleClick"));
+            bool healthPressed = PressedEdge(pad, config.GetBinding("Health"));
+            bool grabPressed = PressedEdge(pad, config.GetBinding("Grab"));
+            bool crewOrdersPressed = PressedEdge(pad, config.GetBinding("CrewOrders"));
+            bool cursorLockPressed = PressedEdge(pad, config.GetBinding("CursorLockToggle"));
+            bool crouchTogglePressed = PressedEdge(pad, config.GetBinding("CrouchToggle"));
+            bool dpadLeftPressed = PressedEdge(pad, GPadButton.DPadLeft);
+            bool dpadRightPressed = PressedEdge(pad, GPadButton.DPadRight);
 
-							float LTrigger = gamePad.Triggers.Left;
-							float RTrigger = gamePad.Triggers.Right;
-							bool RBButton = (gamePad.Buttons.RightShoulder == ButtonState.Pressed); // RB button
-							bool LBButton = (gamePad.Buttons.LeftShoulder == ButtonState.Pressed); // LB button
+            if (controlled != null)
+            {
+                if (lastCharacter != controlled)
+                {
+                    lastCharacter = controlled;
+                    lastHp = controlled.Health;
+                }
+                if (controlled.Health < lastHp) { StartRumble(1f); }
+                lastHp = controlled.Health;
+            }
 
-							// DPad
-							bool DPadLeftButton = (gamePad.DPad.Left == ButtonState.Pressed);
-							bool DPadUpButton = (gamePad.DPad.Up == ButtonState.Pressed);
-							bool DPadRightButton = (gamePad.DPad.Right == ButtonState.Pressed);
-							bool DPadDownButton = (gamePad.DPad.Down == ButtonState.Pressed);
-							#endregion
+            if (wheelOpen)
+            {
+                VirtualInput.ClampCursorToScreen();
+            }
+            else
+            {
+                ApplyPointer(pad, dt, inMenu ? pad.LeftX : pad.RightX, inMenu ? pad.LeftY : pad.RightY);
+                if (!inMenu && lockCursor && !inCommandMenu)
+                {
+                    float halfRadius = config.CursorRadius / 2f;
+                    float centerX = GameMain.GraphicsWidth / 2f;
+                    float centerY = GameMain.GraphicsHeight / 2f;
+                    VirtualInput.ClampCursor(centerX - halfRadius, centerY - halfRadius, centerX + halfRadius, centerY + halfRadius);
+                }
+                VirtualInput.ClampCursorToScreen();
 
-							// Activation using a gamepad
-							if (LBButton && RBButton && DPadDownButton && AButton)
-							{
-								isModActive = !isModActive;
-								
-								flagActiveCombo = isModActive;
-								Console.Beep();
-								
-								LuaCsLogger.LogMessage("GamepadMod State: - " + isModActive);
-								InputEmulator.KeyUp(Keys.Tab);
-								InputEmulator.KeyUp(Keys.CapsLock);
-								InputEmulator.KeyUp(Keys.LeftControl);
-								InputEmulator.KeyUp(Keys.LeftShift);
-								return true;
-							}
+                float moveX = inMenu ? pad.RightX : pad.LeftX;
+                float moveY = inMenu ? pad.RightY : pad.LeftY;
+                VirtualInput.SetKeyHeld(GKey.Left, moveX < -config.MoveThreshold);
+                VirtualInput.SetKeyHeld(GKey.Right, moveX > config.MoveThreshold);
+                VirtualInput.SetKeyHeld(GKey.Up, moveY > config.MoveThreshold);
+                VirtualInput.SetKeyHeld(GKey.Down, moveY < -config.MoveThreshold);
+            }
 
-							if (!isModActive) return true;
-							if (lastHp != Character.Controlled.Health)
-							{
-								//LuaCsLogger.LogMessage ($"HIT! {lastHp}=>{Character.Controlled.Health}");
-								Vibrate();
-								lastHp = Character.Controlled.Health;
-							}
-							//
-							lastCharacter = Character.Controlled;
-							lastHp = lastCharacter.Health;
+            VirtualInput.SetMouseHeld(!wheelOpen && !comboActive && (a || pad.IsDown(GPadButton.RT)), pad.IsDown(GPadButton.LT));
+            VirtualInput.SetKeyHeld(GKey.Run, pad.IsDown(config.GetBinding("Run")));
+            VirtualInput.SetKeyHeld(GKey.Ragdoll, !wheelOpen && pad.IsDown(config.GetBinding("Ragdoll")) && controlled != null);
+            VirtualInput.SetKeyHeld(GKey.Crouch, !wheelOpen && lockCrouch && controlled != null);
 
-							float rightStickX = 0;
-							float rightStickY = 0;
+            if (!wheelOpen)
+            {
+                if (infoTabPressed) { VirtualInput.PressKey(GKey.InfoTab); }
+                if (middleClickPressed) { VirtualInput.ClickMiddle(); }
+                if (usePressed)
+                {
+                    if (!inMenu && !inCommandMenu) { VirtualInput.PressKey(GKey.Use); }
+                    else { VirtualInput.PressKey(Keys.Escape); }
+                }
 
-							if (!inMenu)
-							{
-								rightStickX = gamePad.ThumbSticks.Right.X;
-								rightStickY = gamePad.ThumbSticks.Right.Y;
-								Move(gamePad, true);
-							}
-							else
-							{
-								rightStickX = gamePad.ThumbSticks.Left.X;
-								rightStickY = gamePad.ThumbSticks.Left.Y;
-								Move(gamePad, false);
-							}
+                if (controlled != null)
+                {
+                    if (healthPressed) { VirtualInput.PressKey(GKey.Health); }
+                    if (grabPressed) { VirtualInput.PressKey(GKey.Grab); }
+                    if (crewOrdersPressed) { VirtualInput.PressKey(GKey.CrewOrders); }
+                }
 
-							CursorX += rightStickX * CursorSpeed;
-							CursorY += rightStickY * -1 * CursorSpeed;
+                if (cursorLockPressed) { lockCursor = !lockCursor; }
+                if (crouchTogglePressed && !comboActive) { lockCrouch = !lockCrouch; }
+            }
 
-							if ((!inMenu && lockCursor) && !inCM)
-							{
-								CursorX = Math.Clamp(CursorX, ScreenCenterX - CursorRadius / 2, ScreenCenterX + CursorRadius / 2);
-								CursorY = Math.Clamp(CursorY, ScreenCenterY - CursorRadius / 2, ScreenCenterY + CursorRadius / 2);
-							}
+            if (config.SlotWheelEnabled)
+            {
+                UpdateSlotWheel(pad, inMenu, comboActive, slotNextPressed, slotPrevPressed, dpadLeftPressed, dpadRightPressed, usePressed);
+            }
+            else if (controlled != null && !comboActive)
+            {
+                if (slotNextPressed) { CycleSlot(1); }
+                if (slotPrevPressed) { CycleSlot(-1); }
+            }
+        }
 
-							SetCursorPosition((int) CursorX, (int) CursorY);
+        private void UpdateSlotWheel(PadSnapshot pad, bool inMenu, bool comboActive, bool slotNextPressed, bool slotPrevPressed, bool dpadLeftPressed, bool dpadRightPressed, bool usePressed)
+        {
+            if (!wheelOpen)
+            {
+                if (comboActive || (!slotNextPressed && !slotPrevPressed)) { return; }
+                wheelOpen = true;
+                wheelStickReady = (float)Math.Sqrt(pad.LeftX * pad.LeftX + pad.LeftY * pad.LeftY) < 0.3f;
+                wheelLastChange = Clock.Elapsed.TotalSeconds;
+                slotWheel.OpenWheel(slot);
+                return;
+            }
 
-							if (StartButton)
-							{
-								if (!flagStart)
-								{
-									InputEmulator.KeyPress(Keys.Escape);
-									flagStart = true;
-								}
-							}
-							else
-							{
-								flagStart = false;
-							}
+            if (inMenu || optionsUI.IsOpen || !pad.IsConnected) { CancelSlotWheel(); return; }
+            if (usePressed) { CancelSlotWheel(); return; }
+            if (Clock.Elapsed.TotalSeconds > wheelLastChange + 4.0) { CancelSlotWheel(); return; }
 
-							if (BackButton)
-							{
-								if (!flagBack)
-								{
-									InputEmulator.KeyPress(GKey.InfoTab);
-									flagBack = true;
-								}
-							}
-							else
-							{
-								flagBack = false;
-							}
+            float stickX = pad.LeftX;
+            float stickY = pad.LeftY;
+            float magnitude = (float)Math.Sqrt(stickX * stickX + stickY * stickY);
+            if (!wheelStickReady && magnitude < 0.3f) { wheelStickReady = true; }
+            if (wheelStickReady && magnitude > 0.45f)
+            {
+                double angleDeg = Math.Atan2(-stickY, stickX) * 180.0 / Math.PI;
+                double rel = (angleDeg + 90.0 + 360.0) % 360.0;
+                int idx = ((int)Math.Round(rel / 36.0)) % 10;
+                if (slotWheel.Select(idx)) { wheelLastChange = Clock.Elapsed.TotalSeconds; }
+            }
 
-							if (LStButton)
-							{
-								InputEmulator.KeyDown(GKey.Run);
-								flagLS = true;
-							}
-							else
-							{
-								if (flagLS)
-								{
-									InputEmulator.KeyUp(GKey.Run);
-									flagLS = false;
-								}
+            int step = 0;
+            if (pad.IsDown(config.GetBinding("SlotNext")) && slotPrevPressed) { step = 1; }
+            else if (pad.IsDown(config.GetBinding("SlotPrev")) && slotNextPressed) { step = -1; }
+            else if (dpadLeftPressed) { step = -1; }
+            else if (dpadRightPressed) { step = 1; }
+            if (step != 0 && slotWheel.Move(step)) { wheelLastChange = Clock.Elapsed.TotalSeconds; }
 
-							}
+            bool bumperHeld = pad.IsDown(config.GetBinding("SlotNext")) || pad.IsDown(config.GetBinding("SlotPrev"));
+            if (!bumperHeld)
+            {
+                int keyIndex = slotWheel.KeyIndexAt(slotWheel.SelectedIndex);
+                if (slotWheel.SelectedIndex != slotWheel.InitialIndex && keyIndex >= 0)
+                {
+                    VirtualInput.PressKey(GKey.InventorySlot(keyIndex));
+                    slot = keyIndex;
+                }
+                wheelOpen = false;
+                slotWheel.Close();
+            }
+        }
 
-							if (RStButton)
-							{
-								if (!flagRS)
-								{
-									InputEmulator.Mouse.PressMouseButton(2);
-									flagRS = true;
-								}
-							}
-							else
-							{
-								flagRS = false;
-							}
+        private void CancelSlotWheel()
+        {
+            if (!wheelOpen) { return; }
+            wheelOpen = false;
+            slotWheel.Close();
+        }
 
-							if (AButton)
-							{
-								InputEmulator.Mouse.LeftDown();
-								flagA = true;
-							}
-							else
-							{
-								if (flagA)
-								{
-									InputEmulator.Mouse.LeftUp();
-									flagA = false;
-								}
-							}
+        private IPadBackend SelectBackend()
+        {
+            try
+            {
+                switch (config.BackendMode)
+                {
+                    case 3: return monoBackend;
+                    case 1:
+                        return sdlBackend.IsAvailable && sdlBackend.TryConnect() ? (IPadBackend)sdlBackend : monoBackend;
+                    case 2:
+                        IPadBackend steamInner = sdlBackend.IsAvailable ? (IPadBackend)sdlBackend : monoBackend;
+                        return WrapSteam(steamInner) ?? steamInner;
+                    default:
+                        if (sdlBackend.IsAvailable && sdlBackend.TryConnect())
+                        {
+                            PadSnapshot probe;
+                            try { probe = sdlBackend.Poll(); }
+                            catch { return sdlBackend; }
+                            return probe.IsSteamVirtual ? WrapSteam(sdlBackend) ?? sdlBackend : (IPadBackend)sdlBackend;
+                        }
+                        return WrapSteam(monoBackend) ?? monoBackend;
+                }
+            }
+            catch (Exception e)
+            {
+                LuaCsLogger.LogMessage("GamepadInput: backend selection failed, using MonoGame:\n" + e);
+                return monoBackend;
+            }
+        }
 
-							if (BButton)
-							{
-								if (!flagB)
-								{
-									if (!inMenu && !inCM)
-										InputEmulator.KeyPress(GKey.Use);
-									else
-										InputEmulator.KeyPress(Keys.Escape);
+        private IPadBackend steamWrapper;
+        private IPadBackend steamWrappedInner;
 
-									flagB = true;
-								}
-							}
-							else
-							{
-								flagB = false;
-							}
+        private IPadBackend WrapSteam(IPadBackend inner)
+        {
+            if (!SteamInputApi.EnsureReady(-1.0)) { return null; }
+            if (steamWrapper != null && steamWrappedInner == inner) { return steamWrapper; }
+            steamWrappedInner = inner;
+            steamWrapper = new SteamPadBackend(inner);
+            return steamWrapper;
+        }
 
-							if (XButton)
-							{
-								if (!flagX)
-								{
-									InputEmulator.KeyPress(GKey.Health);
-									flagX = true;
-								}
-							}
-							else
-							{
-								flagX = false;
-							}
-							if (YButton)
-							{
-								if (!flagY)
-								{
-									InputEmulator.KeyPress(GKey.Grab);
-									flagY = true;
-								}
-							}
-							else
-							{
-								flagY = false;
-							}
+        private void UpdateBackend(float dt)
+        {
+            if (config.BackendMode != appliedBackendMode)
+            {
+                appliedBackendMode = config.BackendMode;
+                padBackend.Disconnect();
+                padBackend = SelectBackend() ?? monoBackend;
+                OptionsUI.BackendName = padBackend.Name;
+                prevButtons.Clear();
+                LuaCsLogger.LogMessage("GamepadInput: input backend now " + padBackend.Name);
+                return;
+            }
+            if (padBackend.IsConnected) { backendRetryTimer = 2f; return; }
+            backendRetryTimer -= dt;
+            if (backendRetryTimer > 0f) { return; }
+            backendRetryTimer = 2f;
+            IPadBackend selected = SelectBackend();
+            if (selected != null && selected != padBackend)
+            {
+                padBackend = selected;
+                OptionsUI.BackendName = padBackend.Name;
+                prevButtons.Clear();
+                LuaCsLogger.LogMessage("GamepadInput: switched input backend to " + padBackend.Name);
+            }
+        }
 
-							if (RTrigger == 1)
-							{
-								InputEmulator.Mouse.LeftDown();
-								mLb = true;
-							}
-							else
-							{
-								if (mLb)
-								{
-									InputEmulator.Mouse.LeftUp();
-									mLb = false;
-								}
-							}
-							if (LTrigger == 1)
-							{
-								InputEmulator.Mouse.RightDown();
-								mRb = true;
-							}
-							else
-							{
-								if (mRb)
-								{
-									InputEmulator.Mouse.RightUp();
-									mRb = false;
-								}
-							}
+        private void ApplyPointer(PadSnapshot pad, float dt, float stickX, float stickY)
+        {
+            ApplyDeadzone(ref stickX, ref stickY, config.CursorDeadzone);
+            if (dt > 0f && (stickX != 0f || stickY != 0f))
+            {
+                VirtualInput.MoveCursor(stickX * config.CursorSpeed * dt, -stickY * config.CursorSpeed * dt);
+            }
 
-							if (RBButton)
-							{
-								if (!flagRB)
-								{
-									slot++;
-									if (slot > 9) slot = 0;
-									InputEmulator.KeyPress(NumberKeys[slot]);
-									flagRB = true;
-								}
-							}
-							else
-							{
-								flagRB = false;
-							}
+            if (config.GyroEnabled)
+            {
+                bool preferSteam = config.GyroSource == 2 || (config.GyroSource == 0 && !pad.HasGyro);
+                bool steamUsed = preferSteam && SteamGyro.Available;
+                if (steamUsed)
+                {
+                    if (SteamGyro.HasMotion)
+                    {
+                        float scale = GyroBaseSpeed * config.GyroSensitivity;
+                        VirtualInput.MoveCursor(-SteamGyro.Yaw * scale * dt, -SteamGyro.Pitch * scale * dt);
+                    }
+                }
+                else if (pad.HasGyro)
+                {
+                    float scale = GyroBaseSpeed * config.GyroSensitivity;
+                    VirtualInput.MoveCursor(-pad.GyroYaw * scale * dt, -pad.GyroPitch * scale * dt);
+                }
+            }
 
-							if (LBButton)
-							{
-								if (!flagLB)
-								{
-									slot--;
-									if (slot < 0) slot = 9;
-									InputEmulator.KeyPress(NumberKeys[slot]);
-									flagLB = true;
-								}
-							}
-							else
-							{
-								flagLB = false;
-							}
+            if (config.TouchpadCursor && pad.HasTouchpad && pad.TouchpadDown)
+            {
+                VirtualInput.MoveCursor(pad.TouchDX * GameMain.GraphicsWidth, pad.TouchDY * GameMain.GraphicsHeight);
+            }
+        }
 
-							if (DPadLeftButton)
-							{
-								InputEmulator.KeyDown(GKey.Ragdoll);
-								flagDLeft = true;
-							}
-							else
-							{
-								if (flagDLeft)
-								{
-									InputEmulator.KeyUp(GKey.Ragdoll);
-									flagDLeft = false;
-								}
-							}
+        private void HandleOpenUI(PadSnapshot pad, float dt)
+        {
+            optionsUI.UpdateCapture(pad);
 
-							if (DPadUpButton)
-							{
-								if (!flagDUp)
-								{
-									lockCursor = !lockCursor;
-									flagDUp = true;
-								}
-							}
-							else
-							{
-								flagDUp = false;
-							}
-							if (DPadRightButton)
-							{
-								if (!flagDRight)
-								{
-									InputEmulator.KeyPress(GKey.CrewOrders);
-									flagDRight = true;
-								}
-							}
-							else
-							{
-								flagDRight = false;
-							}
-							if (DPadDownButton)
-							{
-								if (flagDDown)
-								{
-									lockCroth = !lockCroth;
-									flagDDown = false;
-								}
-							}
-							else
-							{
-								flagDDown = true;
-							}
-							if (lockCroth)
-							{
-								InputEmulator.KeyDown(GKey.Crouch);
-							}
-							else
-							{
-								InputEmulator.KeyUp(GKey.Crouch);
-							}
+            bool bPressed = PressedEdge(pad, GPadButton.B);
+            if (!optionsUI.IsCapturing && bPressed)
+            {
+                optionsUI.Close();
+            }
 
-						}
-					}
-					return true;
-				}, LuaCsHook.HookMethodType.After, this);
-		}
-		
-		public void Move(GamePadState gamePad, bool type)
-		{
-			int way = getStickWay(gamePad, type);
+            ApplyPointer(pad, dt, pad.LeftX, pad.LeftY);
+            VirtualInput.ClampCursorToScreen();
 
-			//LuaCsLogger.LogMessage ($"way : {way}");
-			switch (way)
-			{
-				case 0:
-					InputEmulator.KeyDown(GKey.Left);
-					InputEmulator.KeyUp(GKey.Right);
-					break;
-				case 1:
-					InputEmulator.KeyDown(GKey.Up);
-					break;
-				case 2:
-					InputEmulator.KeyDown(GKey.Right);
-					InputEmulator.KeyUp(GKey.Left);
-					break;
-				case 3:
-					InputEmulator.KeyDown(GKey.Down);
-					break;	
-				default:
-					moveRelease(); break;
-			}
-		}
-		void moveRelease()
-		{
-			InputEmulator.KeyUp(GKey.Up);
-			InputEmulator.KeyUp(GKey.Left);
-			InputEmulator.KeyUp(GKey.Down);
-			InputEmulator.KeyUp(GKey.Right);
-		}
-		public int getStickWay(GamePadState gamePad, bool type)
-		{
-			float leftStickX = 0;
-			float leftStickY = 0;
-			if (type)
-			{
-				leftStickX = gamePad.ThumbSticks.Left.X;
-				leftStickY = gamePad.ThumbSticks.Left.Y;
-			}
-			else
-			{
+            VirtualInput.SetMouseHeld(pad.IsDown(GPadButton.A) || pad.IsDown(GPadButton.RT), pad.IsDown(GPadButton.LT));
+            VirtualInput.SetKeyHeld(GKey.Left, false);
+            VirtualInput.SetKeyHeld(GKey.Right, false);
+            VirtualInput.SetKeyHeld(GKey.Up, false);
+            VirtualInput.SetKeyHeld(GKey.Down, false);
+            VirtualInput.SetKeyHeld(GKey.Run, false);
+            VirtualInput.SetKeyHeld(GKey.Ragdoll, false);
+            VirtualInput.SetKeyHeld(GKey.Crouch, false);
+        }
 
-				leftStickX = gamePad.ThumbSticks.Right.X;
-				leftStickY = gamePad.ThumbSticks.Right.Y;
-			}
+        private void HandleActivation(PadSnapshot pad)
+        {
+            bool altJ = PlayerInput.KeyDown(Keys.J) && PlayerInput.IsAltDown();
+            if (altJ)
+            {
+                if (!altJHeld) { altJHeld = true; Toggle(); }
+            }
+            else
+            {
+                altJHeld = false;
+            }
 
-			int result = -1;
-			if (leftStickX < -0.8) result = 0;
-			if (leftStickX >  0.8) result = 2;
-			if (leftStickY >  0.8) result = 1;
-			if (leftStickY < -0.8) result = 3;
-			return result;
-		}
+            bool combo = pad.IsDown(GPadButton.LB)
+                && pad.IsDown(GPadButton.RB)
+                && pad.IsDown(GPadButton.DPadDown)
+                && pad.IsDown(GPadButton.A);
+            if (combo)
+            {
+                if (!comboHeld) { comboHeld = true; Toggle(); }
+            }
+            else
+            {
+                comboHeld = false;
+            }
+        }
 
-		public static void SetCursorPosition(int x, int y)
-		{
-			SetCursorPos(x, y);
-		}
-		public static MousePoint GetCursorPosition()
-		{
-			MousePoint currentMousePoint;
-			var gotPoint = GetCursorPos(out currentMousePoint);
-			if (!gotPoint) { currentMousePoint = new MousePoint(0, 0); }
-			return currentMousePoint;
-		}
+        private void Toggle()
+        {
+            isModActive = !isModActive;
+            VirtualInput.ModActive = isModActive;
+            if (isModActive)
+            {
+                VirtualInput.ActivateMouse();
+                LuaCsLogger.LogMessage("GamepadMod enabled");
+                ShowSteamInputHintIfNeeded();
+            }
+            else
+            {
+                if (optionsUI.IsOpen) { optionsUI.Close(); }
+                CancelSlotWheel();
+                VirtualInput.ReleaseAll();
+                lockCrouch = false;
+                LuaCsLogger.LogMessage("GamepadMod disabled");
+            }
+        }
 
-		[StructLayout(LayoutKind.Sequential)]
-		public struct MousePoint
-		{
-			public int X;
-			public int Y;
+        private void ShowSteamInputHintIfNeeded()
+        {
+            if (steamInputHintShown) { return; }
+            try
+            {
+                if (!SteamInputCompat.SteamAvailable) { return; }
+                PadSnapshot pad = padBackend.Poll();
+                if (pad.IsConnected) { return; }
+                steamInputHintShown = true;
+                new GUIMessageBox(
+                    "Gamepad Input",
+                    SteamInputCompat.Instructions,
+                    new LocalizedString[] { "Close" },
+                    new Vector2(0.55f, 0.4f),
+                    new Point(540, 320));
+            }
+            catch { }
+        }
 
-			public MousePoint(int x, int y)
-			{
-				X = x;
-				Y = y;
-			}
-		}
-		public async void Vibrate()
-		{
-			GamePad.SetVibration(0, 1f, 1f); // make the controller rumble
-			await Task.Delay(500);
-			GamePad.SetVibration(0, 0, 0); // make the controller rumble
-		}
-	}
+        private void CycleSlot(int direction)
+        {
+            slot = (slot + direction + 10) % 10;
+            VirtualInput.PressKey(GKey.InventorySlot(slot));
+        }
 
+        private void StartRumble(float strength)
+        {
+            if (!config.VibrationEnabled) { return; }
+            try
+            {
+                padBackend.SetRumble(strength, config.VibrationDuration);
+                rumbleUntil = Clock.Elapsed.TotalSeconds + config.VibrationDuration;
+            }
+            catch { }
+        }
+
+        private void UpdateRumble()
+        {
+            if (rumbleUntil > 0.0 && Clock.Elapsed.TotalSeconds >= rumbleUntil)
+            {
+                try { padBackend.StopRumble(); } catch { }
+                rumbleUntil = 0.0;
+            }
+        }
+
+        private bool PressedEdge(PadSnapshot pad, GPadButton button)
+        {
+            bool current = pad.IsDown(button);
+            prevButtons.TryGetValue(button, out bool previous);
+            prevButtons[button] = current;
+            return current && !previous;
+        }
+
+        private static bool IsInMenu(Character controlled)
+        {
+            if (controlled == null) { return true; }
+            if (controlled.SelectedItem != null) { return true; }
+            if (GUI.InputBlockingMenuOpen) { return true; }
+            if (CharacterHealth.OpenHealthWindow != null) { return true; }
+            if (ConversationAction.IsDialogOpen) { return true; }
+            return false;
+        }
+
+        private static void ApplyDeadzone(ref float x, ref float y, float deadzone)
+        {
+            float magnitude = (float)Math.Sqrt(x * x + y * y);
+            if (magnitude <= deadzone)
+            {
+                x = 0f;
+                y = 0f;
+                return;
+            }
+            if (magnitude > 1f)
+            {
+                x /= magnitude;
+                y /= magnitude;
+            }
+        }
+    }
 }

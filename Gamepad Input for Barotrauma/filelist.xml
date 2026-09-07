@@ -1,4 +1,4 @@
 ﻿<?xml version="1.0" encoding="utf-8"?>
-<contentpackage name="Gamepad Input for Barotrauma" modversion="0.1.7" corepackage="False" steamworkshopid="2967824521" gameversion="1.2.7.0">
+<contentpackage name="Gamepad Input for Barotrauma" modversion="0.5.9" corepackage="False" steamworkshopid="2967824521" gameversion="1.13.4.0">
   <Other file="%ModDir%/CSharp/RunConfig.xml" />
 </contentpackage>
