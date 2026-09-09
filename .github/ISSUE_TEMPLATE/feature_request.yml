@@ -1,0 +1,79 @@
+name: Feature request / improvement
+description: Suggest a new feature, a better default, or an improvement to an existing one
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Ideas for controls, UI, the item wheel, gyro behavior, Steam Input support,
+        Steam Deck quality of life — all welcome.
+
+  - type: checkboxes
+    id: pre-checks
+    attributes:
+      label: Before submitting
+      options:
+        - label: I have searched existing feature requests and this is not a duplicate.
+          required: true
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Is your feature request related to a problem?
+      description: |
+        Example: "When driving a sub, the cursor keeps re-centering and I can't quickly click valves."
+        If it isn't, you can leave this empty.
+    validations:
+      required: false
+
+  - type: textarea
+    id: solution
+    attributes:
+      label: Describe the solution you'd like
+      description: What exactly should happen. If it's a control change — which button/stick/gesture.
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Describe alternatives you've considered
+      description: Other ways to solve it, settings that could make it work, other games/mods doing it better.
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: area
+    attributes:
+      label: Which part of the mod does this touch?
+      options:
+        - label: Options UI
+        - label: Controls layout
+        - label: Item wheel
+        - label: Gyro & motion
+        - label: Steam Input
+        - label: Vibration
+        - label: Backends (SDL / MonoGame / Steam)
+        - label: Documentation
+        - label: Other
+
+  - type: dropdown
+    id: importance
+    attributes:
+      label: How would you rate the importance?
+      options:
+        - Nice to have
+        - Would improve my experience
+        - Blocks me from playing with a gamepad
+    validations:
+      required: true
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Additional context
+      description: |
+        Mockups, videos, links — you can drag & drop them right into this field.
+        If relevant: controller model and platform.
+    validations:
+      required: false

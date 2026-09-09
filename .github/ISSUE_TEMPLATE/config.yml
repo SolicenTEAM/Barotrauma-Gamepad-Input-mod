@@ -1,8 +1,9 @@
 blank_issues_enabled: false
 contact_links:
-  - name: Steam Workshop page
-    url: https://steamcommunity.com/sharedfiles/filedetails/?id=2967824521
-    about: Mod description, comments and discussions on Steam.
   - name: Question / support
     url: https://steamcommunity.com/workshop/filedetails/discussion/2967824521/3829791550531392722/
-    about: Installation help and general questions are best asked in the Workshop discussion.
+    about: Installation help, controller compatibility questions, general questions — best asked here instead of a GitHub issue.
+
+  - name: Steam Workshop page
+    url: https://steamcommunity.com/sharedfiles/filedetails/?id=2967824521
+    about: Mod description, changelog, comments and discussions on Steam.

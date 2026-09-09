@@ -1,0 +1,158 @@
+name: Controller / device compatibility
+description: Your specific controller does not work, or part of it (gyro, rumble, touchpad, buttons) is missing
+labels: ["compatibility"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this template when a specific controller model doesn't work at all,
+        or works partially (e.g. buttons fine but no gyro / no rumble / no touchpad).
+
+  - type: checkboxes
+    id: pre-checks
+    attributes:
+      label: Before submitting
+      description: Please confirm the following.
+      options:
+        - label: I have searched existing issues (open and closed) for my controller model.
+          required: true
+        - label: I am using the latest version of the mod and LuaCs For Barotrauma.
+          required: true
+        - label: I have tested with other mods disabled (or listed them in "Anything else?").
+          required: false
+
+  - type: markdown
+    attributes:
+      value: "## Your controller"
+
+  - type: input
+    id: controller-model
+    attributes:
+      label: Controller model
+      description: e.g. "Nintendo Switch Joy-Con (L)+(R)", "DualSense", "8BitDo Pro 2"
+      placeholder: DualSense
+    validations:
+      required: true
+
+  - type: dropdown
+    id: connection
+    attributes:
+      label: Connection
+      description: If you use an adapter/dongle, mention which one in "Anything else?".
+      options:
+        - USB
+        - Bluetooth
+        - Adapter / dongle
+        - Built-in
+        - Other
+    validations:
+      required: true
+
+  - type: dropdown
+    id: platform
+    attributes:
+      label: Platform
+      options:
+        - Windows
+        - Linux
+        - Steam Deck
+        - Other
+    validations:
+      required: true
+
+  - type: dropdown
+    id: steam-input
+    attributes:
+      label: Steam Input
+      options:
+        - Enabled
+        - Disabled
+        - Not sure
+    validations:
+      required: true
+
+  - type: input
+    id: steam-input-layout
+    attributes:
+      label: Steam Input layout template
+      description: Only if Steam Input is enabled — Gamepad / keyboard-mouse / custom (which one?).
+    validations:
+      required: false
+
+  - type: textarea
+    id: system-visibility
+    attributes:
+      label: How is the pad visible to the PC?
+      description: |
+        What does Windows "Set up USB game controllers" (joy.cpl) show?
+        On Steam Deck / Linux — is the pad detected by the system?
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: what-works
+    attributes:
+      label: What works
+      description: Tick what you SEE working in game.
+      options:
+        - label: Buttons (A/B/X/Y, bumpers, triggers...)
+        - label: Sticks (movement / cursor)
+        - label: DPad
+        - label: Cursor movement with stick
+        - label: Item wheel (hold RB/LB)
+        - label: Gyro (cursor moves when tilting the controller)
+        - label: Vibration / rumble
+        - label: Touchpad cursor (DS4 / DS5)
+        - label: Battery level in the mod's options window
+
+  - type: textarea
+    id: what-does-not-work
+    attributes:
+      label: What does NOT work
+      description: |
+        Describe precisely: which buttons/actions are dead, inverted, or weird.
+        e.g. "cursor with gyro moves in the wrong direction", "LB/RB do nothing".
+    validations:
+      required: true
+
+  - type: textarea
+    id: options-status-line
+    attributes:
+      label: Mod's options window — status line
+      description: |
+        Open the mod options (F8 / hold Start) and copy the status text under the settings.
+        Example: "Gamepad: Steam Input: Joy-Con pair (input: Steam Input) | Gyro: available (via Steam Input)"
+      render: shell
+    validations:
+      required: true
+
+  - type: textarea
+    id: console-log
+    attributes:
+      label: Console log
+      description: |
+        Every line starting with "GamepadInput:" from the in-game console (F3).
+        These lines tell us which backend was chosen and what the sensors/actions did.
+      render: shell
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps-tried
+    attributes:
+      label: Steps you already tried
+      description: |
+        e.g. "disabled Steam Input", "set Gamepad template in Steam", "re-paired the Joy-Cons",
+        "installed DS4Windows", "restarted the game" — so we don't ask you to do it again.
+    validations:
+      required: false
+
+  - type: textarea
+    id: anything-else
+    attributes:
+      label: Anything else?
+      description: |
+        Firmware version of the controller, adapters/dongles (which ones?),
+        other mods that hook input, etc.
+    validations:
+      required: false
