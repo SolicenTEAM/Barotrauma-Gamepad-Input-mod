@@ -36,7 +36,10 @@ namespace GamePadInput
         private readonly List<SliderRow> sliders = new List<SliderRow>();
         private readonly List<TickRow> tickBoxes = new List<TickRow>();
         private readonly List<BindRow> bindRows = new List<BindRow>();
+        private readonly List<KeyValuePair<GUIButton, Func<string>>> cycleButtons = new List<KeyValuePair<GUIButton, Func<string>>>();
         private GUITextBlock statusText;
+
+        private static readonly Color SectionColor = new Color(0, 255, 255, 255); // #00ffff
 
         public bool IsOpen { get; private set; }
         public bool IsCapturing { get; private set; }
@@ -196,6 +199,10 @@ namespace GamePadInput
             {
                 row.Button.TextBlock.Text = GPadInput.GetLabel(config.GetBinding(row.Action));
             }
+            foreach (KeyValuePair<GUIButton, Func<string>> pair in cycleButtons)
+            {
+                pair.Key.TextBlock.Text = pair.Value();
+            }
         }
 
         private static string GetBackendLabel(int mode)
@@ -231,6 +238,25 @@ namespace GamePadInput
             tickBoxes.Add(new TickRow { Box = box, Getter = getter });
         }
 
+        private void AddCycleButtonRow(GUIComponent parent, Func<int, string> formatter, Func<int> getter, Action<int> setter, int count)
+        {
+            GUIButton button = new GUIButton(new RectTransform(new Vector2(1.0f, 0.042f), parent.RectTransform), formatter(getter()));
+            button.OnClicked += (b, data) =>
+            {
+                int next = (getter() + 1) % count;
+                setter(next);
+                b.TextBlock.Text = formatter(next);
+                return true;
+            };
+            cycleButtons.Add(new KeyValuePair<GUIButton, Func<string>>(button, () => formatter(getter())));
+        }
+
+        private static void AddDivider(GUIComponent parent, string text)
+        {
+            // увеличенная высота блока при центрированном тексте даёт воздух сверху и снизу
+            new GUITextBlock(new RectTransform(new Vector2(1.0f, 0.07f), parent.RectTransform), text, textColor: SectionColor, textAlignment: Alignment.Center);
+        }
+
         private void Build(RectTransform screenFrame)
         {
             blocker = new GUIFrame(new RectTransform(Vector2.One, screenFrame, Anchor.Center), style: null);
@@ -239,48 +265,45 @@ namespace GamePadInput
 
             window = new GUIFrame(new RectTransform(new Vector2(0.5f, 0.85f), blocker.RectTransform, Anchor.Center) { MinSize = new Point(660, 520) });
 
-            GUILayoutGroup layout = new GUILayoutGroup(new RectTransform(Vector2.One * 0.97f, window.RectTransform, Anchor.Center, Pivot.Center), isHorizontal: false, childAnchor: Anchor.TopLeft)
+            GUILayoutGroup layout = new GUILayoutGroup(new RectTransform(Vector2.One * 0.94f, window.RectTransform, Anchor.Center, Pivot.Center), isHorizontal: false, childAnchor: Anchor.TopLeft)
             {
-                RelativeSpacing = 0.004f
+                RelativeSpacing = 0.012f
             };
 
-            new GUITextBlock(new RectTransform(new Vector2(1.0f, 0.05f), layout.RectTransform), "GAMEPAD INPUT — SETTINGS", font: GUIStyle.LargeFont, textAlignment: Alignment.Center);
+            new GUITextBlock(new RectTransform(new Vector2(1.0f, 0.04f), layout.RectTransform), "Gamepad Input — Settings", font: GUIStyle.SubHeadingFont, textAlignment: Alignment.Center);
 
-            GUIListBox list = new GUIListBox(new RectTransform(new Vector2(1.0f, 0.86f), layout.RectTransform));
+            GUIListBox list = new GUIListBox(new RectTransform(new Vector2(1.0f, 0.85f), layout.RectTransform));
             GUIFrame listContent = list.Content;
 
+            AddDivider(listContent, "Cursor & Movement");
             AddSliderRow(listContent, "Cursor speed", 200f, 3000f, 50f, () => config.CursorSpeed, v => config.CursorSpeed = v, v => ((int)v).ToString());
             AddSliderRow(listContent, "Cursor deadzone", 0.05f, 0.5f, 0.05f, () => config.CursorDeadzone, v => config.CursorDeadzone = v, v => v.ToString("0.00"));
             AddSliderRow(listContent, "Move threshold", 0.1f, 0.9f, 0.05f, () => config.MoveThreshold, v => config.MoveThreshold = v, v => v.ToString("0.00"));
             AddSliderRow(listContent, "Cursor lock radius", 50f, 600f, 25f, () => config.CursorRadius, v => config.CursorRadius = v, v => ((int)v).ToString());
-            AddSliderRow(listContent, "Vibration time", 0.1f, 2f, 0.1f, () => config.VibrationDuration, v => config.VibrationDuration = v, v => v.ToString("0.0"));
-            AddSliderRow(listContent, "Gyro sensitivity", 0.5f, 8f, 0.1f, () => config.GyroSensitivity, v => config.GyroSensitivity = v, v => v.ToString("0.0"));
+            AddTickBoxRow(listContent, "Swap sticks in menus (left stick = cursor)", () => config.StickSwap, v => config.StickSwap = v);
 
-            GUIButton gyroSourceButton = new GUIButton(new RectTransform(new Vector2(1.0f, 0.042f), listContent.RectTransform), GetGyroSourceLabel(config.GyroSource));
-            gyroSourceButton.OnClicked += (button, data) =>
-            {
-                config.GyroSource = (config.GyroSource + 1) % 3;
-                button.TextBlock.Text = GetGyroSourceLabel(config.GyroSource);
-                return true;
-            };
-
-            GUIButton backendButton = new GUIButton(new RectTransform(new Vector2(1.0f, 0.042f), listContent.RectTransform), GetBackendLabel(config.BackendMode));
-            backendButton.OnClicked += (button, data) =>
-            {
-                config.BackendMode = (config.BackendMode + 1) % 4;
-                button.TextBlock.Text = GetBackendLabel(config.BackendMode);
-                return true;
-            };
-
-            AddTickBoxRow(listContent, "Vibration enabled", () => config.VibrationEnabled, v => config.VibrationEnabled = v);
+            AddDivider(listContent, "Gyro & Motion");
             AddTickBoxRow(listContent, "Gyro cursor (Steam Deck / DualShock / Switch)", () => config.GyroEnabled, v => config.GyroEnabled = v);
+            AddSliderRow(listContent, "Gyro sensitivity", 0.5f, 8f, 0.1f, () => config.GyroSensitivity, v => config.GyroSensitivity = v, v => v.ToString("0.0"));
             AddTickBoxRow(listContent, "Touchpad cursor (DualShock / DualSense)", () => config.TouchpadCursor, v => config.TouchpadCursor = v);
-            AddTickBoxRow(listContent, "Inventory item wheel (hold bumper, point with stick, release to take)", () => config.SlotWheelEnabled, v => config.SlotWheelEnabled = v);
+            AddCycleButtonRow(listContent, GetGyroSourceLabel, () => config.GyroSource, v => config.GyroSource = v, 3);
 
-            new GUITextBlock(new RectTransform(new Vector2(1.0f, 0.035f), listContent.RectTransform), "Bindings — click a slot, then press a gamepad button");
+            AddDivider(listContent, "Inventory Wheel");
+            AddTickBoxRow(listContent, "Item wheel (hold bumper, point with stick, release to take)", () => config.SlotWheelEnabled, v => config.SlotWheelEnabled = v);
 
+            AddDivider(listContent, "Vibration");
+            AddTickBoxRow(listContent, "Vibration enabled", () => config.VibrationEnabled, v => config.VibrationEnabled = v);
+            AddSliderRow(listContent, "Vibration time", 0.1f, 2f, 0.1f, () => config.VibrationDuration, v => config.VibrationDuration = v, v => v.ToString("0.0"));
+
+            AddDivider(listContent, "Advanced");
+            AddCycleButtonRow(listContent, GetBackendLabel, () => config.BackendMode, v => config.BackendMode = v, 4);
+
+            AddDivider(listContent, "Status");
             statusText = new GUITextBlock(new RectTransform(new Vector2(1.0f, 0.07f), listContent.RectTransform), "", wrap: true);
             UpdateStatusText();
+
+            AddDivider(listContent, "Bindings");
+            new GUITextBlock(new RectTransform(new Vector2(1.0f, 0.03f), listContent.RectTransform), "Click a slot, then press a gamepad button");
 
             GUILayoutGroup columns = new GUILayoutGroup(new RectTransform(new Vector2(1.0f, 0.3f), listContent.RectTransform), isHorizontal: true, childAnchor: Anchor.TopLeft);
             GUILayoutGroup col1 = new GUILayoutGroup(new RectTransform(new Vector2(0.5f, 1.0f), columns.RectTransform), isHorizontal: false, childAnchor: Anchor.TopLeft);
@@ -347,7 +370,7 @@ namespace GamePadInput
 
         private void AddBindRow(GUIComponent parent, string action)
         {
-            GUILayoutGroup row = new GUILayoutGroup(new RectTransform(new Vector2(1.0f, 0.12f), parent.RectTransform), isHorizontal: true, childAnchor: Anchor.CenterLeft);
+            GUILayoutGroup row = new GUILayoutGroup(new RectTransform(new Vector2(1.0f, 0.105f), parent.RectTransform), isHorizontal: true, childAnchor: Anchor.CenterLeft);
 
             new GUITextBlock(new RectTransform(new Vector2(0.62f, 1.0f), row.RectTransform), ModConfig.ActionLabels.TryGetValue(action, out string label) ? label : action);
 

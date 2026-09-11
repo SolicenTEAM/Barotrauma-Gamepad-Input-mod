@@ -29,6 +29,7 @@ namespace GamePadInput
 
         public bool HasGyro;
         public bool GyroAvailable;
+        public bool SteamActionsInput;
         public float GyroPitch;
         public float GyroYaw;
 

@@ -1,5 +1,4 @@
 using System;
-using System.Linq;
 using System.Reflection;
 
 namespace GamePadInput
@@ -65,6 +64,10 @@ namespace GamePadInput
             if (pad.Power != PadPower.Unknown)
             {
                 text += " | Battery: " + pad.Power;
+            }
+            if (pad.SteamActionsInput)
+            {
+                text += "\nButtons: via Steam Input actions";
             }
             if (pad.IsSteamVirtual)
             {

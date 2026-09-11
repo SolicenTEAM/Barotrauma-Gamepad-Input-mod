@@ -203,7 +203,8 @@ namespace GamePadInput
             }
             else
             {
-                ApplyPointer(pad, dt, inMenu ? pad.LeftX : pad.RightX, inMenu ? pad.LeftY : pad.RightY);
+                bool swapSticks = config.StickSwap && inMenu;
+                ApplyPointer(pad, dt, swapSticks ? pad.LeftX : pad.RightX, swapSticks ? pad.LeftY : pad.RightY);
                 if (!inMenu && lockCursor && !inCommandMenu)
                 {
                     float halfRadius = config.CursorRadius / 2f;
@@ -213,8 +214,8 @@ namespace GamePadInput
                 }
                 VirtualInput.ClampCursorToScreen();
 
-                float moveX = inMenu ? pad.RightX : pad.LeftX;
-                float moveY = inMenu ? pad.RightY : pad.LeftY;
+                float moveX = swapSticks ? pad.RightX : pad.LeftX;
+                float moveY = swapSticks ? pad.RightY : pad.LeftY;
                 VirtualInput.SetKeyHeld(GKey.Left, moveX < -config.MoveThreshold);
                 VirtualInput.SetKeyHeld(GKey.Right, moveX > config.MoveThreshold);
                 VirtualInput.SetKeyHeld(GKey.Up, moveY > config.MoveThreshold);

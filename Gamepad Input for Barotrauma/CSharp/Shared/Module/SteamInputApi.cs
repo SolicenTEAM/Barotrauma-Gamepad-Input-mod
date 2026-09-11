@@ -1,7 +1,6 @@
 using System;
 using System.Globalization;
 using System.IO;
-using System.Linq;
 using System.Reflection;
 using System.Runtime.InteropServices;
 using System.Text;
@@ -42,6 +41,7 @@ namespace GamePadInput
         private static FieldInfo digitalActiveField;
         private static FieldInfo analogXField;
         private static FieldInfo analogYField;
+        private static FieldInfo analogActiveField;
 
         // Порядок строго соответствует GPadButton: A,B,X,Y,LB,RB,LS,RS,Start,Back,DPad*,LT,RT
         private static readonly string[][] DigitalNameSets =
@@ -59,11 +59,23 @@ namespace GamePadInput
         private static IntPtr actionSetHandle;
 
         public static bool ActionsAvailable { get; private set; }
+        // «живает» по-настоящему: хоть одно наше действие когда-то отзывалось (bActive).
+        // Пока false — кнопки надёжнее брать из эмулированного пада.
+        public static bool ActionsAlive { get; private set; }
         public static bool[] ActionButtons { get { return actionButtons; } }
         public static float ActionLeftX { get; private set; }
         public static float ActionLeftY { get; private set; }
         public static float ActionRightX { get; private set; }
         public static float ActionRightY { get; private set; }
+
+        public static bool IsDigitalBound(int index)
+        {
+            return index >= 0 && index < 16 && digitalHandles[index] != IntPtr.Zero;
+        }
+
+        public static bool HasLeftStickAction { get { return leftStickHandle != IntPtr.Zero; } }
+
+        public static bool HasRightStickAction { get { return rightStickHandle != IntPtr.Zero; } }
 
         public static bool IsReady { get; private set; }
         public static bool HasControllers { get; private set; }
@@ -115,6 +127,7 @@ namespace GamePadInput
                     FirstController = IntPtr.Zero;
                     MotionAvailable = false;
                     ActionsAvailable = false;
+                    ActionsAlive = false;
                     if (!noControllersLogged && gameTime >= 0 && gameTime - readySince > 5.0)
                     {
                         noControllersLogged = true;
@@ -126,6 +139,8 @@ namespace GamePadInput
                 {
                     controllersSeenLogged = true;
                     noControllersLogged = false;
+                    HasControllers = true;
+                    FirstController = controller;
                     LuaCsLogger.LogMessage("GamepadInput: Steam Input controller attached (" + GetInputTypeName() + ")");
                 }
                 HasControllers = true;
@@ -185,17 +200,27 @@ namespace GamePadInput
 
         private static void ReadActions(IntPtr controller)
         {
+            bool anyActive = false;
             for (int i = 0; i < 16; i++)
             {
-                actionButtons[i] = digitalHandles[i] != IntPtr.Zero && GetDigitalState(controller, digitalHandles[i]);
+                bool active = false;
+                actionButtons[i] = digitalHandles[i] != IntPtr.Zero && GetDigitalState(controller, digitalHandles[i], out active);
+                anyActive |= active;
             }
             float lx, ly, rx, ry;
-            GetAnalogXY(controller, leftStickHandle, out lx, out ly);
-            GetAnalogXY(controller, rightStickHandle, out rx, out ry);
+            bool leftActive, rightActive;
+            GetAnalogXY(controller, leftStickHandle, out lx, out ly, out leftActive);
+            GetAnalogXY(controller, rightStickHandle, out rx, out ry, out rightActive);
+            anyActive |= leftActive | rightActive;
             ActionLeftX = lx;
             ActionLeftY = ly;
             ActionRightX = rx;
             ActionRightY = ry;
+            if (anyActive && !ActionsAlive)
+            {
+                ActionsAlive = true;
+                LuaCsLogger.LogMessage("GamepadInput: Steam Input actions respond - buttons now read from Steam Input (primary)");
+            }
         }
 
         private static IntPtr GetDigitalHandle(string name)
@@ -216,28 +241,31 @@ namespace GamePadInput
             catch { return IntPtr.Zero; }
         }
 
-        private static bool GetDigitalState(IntPtr controller, IntPtr handle)
+        private static bool GetDigitalState(IntPtr controller, IntPtr handle, out bool active)
         {
+            active = false;
             try
             {
                 object data = getDigitalActionData.Invoke(null, WrapActionArgs(getDigitalActionData, controller, handle));
                 bool state = digitalStateField != null && (bool)digitalStateField.GetValue(data);
-                bool active = digitalActiveField == null || (bool)digitalActiveField.GetValue(data);
+                active = digitalActiveField == null || (bool)digitalActiveField.GetValue(data);
                 return state && active;
             }
             catch { return false; }
         }
 
-        private static void GetAnalogXY(IntPtr controller, IntPtr handle, out float x, out float y)
+        private static void GetAnalogXY(IntPtr controller, IntPtr handle, out float x, out float y, out bool active)
         {
             x = 0f;
             y = 0f;
+            active = false;
             if (handle == IntPtr.Zero || analogXField == null) { return; }
             try
             {
                 object data = getAnalogActionData.Invoke(null, WrapActionArgs(getAnalogActionData, controller, handle));
                 x = Convert.ToSingle(analogXField.GetValue(data));
                 y = Convert.ToSingle(analogYField.GetValue(data));
+                active = analogActiveField == null || (bool)analogActiveField.GetValue(data);
             }
             catch { }
         }
@@ -425,6 +453,7 @@ namespace GamePadInput
                     Type dataAnalog = getAnalogActionData.ReturnType;
                     analogXField = dataAnalog.GetField("X") ?? dataAnalog.GetField("x");
                     analogYField = dataAnalog.GetField("Y") ?? dataAnalog.GetField("y");
+                    analogActiveField = dataAnalog.GetField("Active") ?? dataAnalog.GetField("bActive");
                 }
 
                 Type motionType = getMotionData.ReturnType;
@@ -558,8 +587,20 @@ namespace GamePadInput
             IsReady = false;
             HasControllers = false;
             MotionAvailable = false;
+            ActionsAvailable = false;
+            ActionsAlive = false;
             FirstController = IntPtr.Zero;
             lastPollTime = -1.0;
+            readySince = -1.0;
+            for (int i = 0; i < 16; i++) { actionButtons[i] = false; }
+            for (int i = 0; i < 16; i++) { digitalHandles[i] = IntPtr.Zero; }
+            leftStickHandle = IntPtr.Zero;
+            rightStickHandle = IntPtr.Zero;
+            actionSetHandle = IntPtr.Zero;
+            ActionLeftX = 0f;
+            ActionLeftY = 0f;
+            ActionRightX = 0f;
+            ActionRightY = 0f;
         }
 
         // У динамических сборок (скрипты LuaCs компилируются в рантайме) GetName() может кидать — сканируем безопасно.

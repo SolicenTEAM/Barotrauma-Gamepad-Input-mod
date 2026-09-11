@@ -2,8 +2,8 @@ using System;
 
 namespace GamePadInput
 {
-    // Кнопки/оси/тачпад/батарея — от обёрнутого бэкенда (Steam отдаёт виртуальный пад),
-    // гиро, хаптика и имя устройства — напрямую из Steam Input API.
+    // Кнопки/оси — приоритетно из наших Steam Input действий (манифест), недостающее —
+    // от обёрнутого бэкенда (эмулированный пад); гиро, хаптика и имя устройства — из Steam API.
     internal class SteamPadBackend : IPadBackend
     {
         private readonly IPadBackend inner;
@@ -43,19 +43,21 @@ namespace GamePadInput
                 snap.VendorId = 0x28DE;
                 snap.DeviceName = "Steam Input: " + SteamInputApi.GetInputTypeName();
 
-                if (!snap.IsConnected && SteamInputApi.ActionsAvailable)
+                if (SteamInputApi.ActionsAvailable)
                 {
-                    // Steam Input прячет сырой пад — кнопки/оси приходят из наших действий
-                    snap.IsConnected = true;
-                    bool[] buttons = new bool[16];
-                    Array.Copy(SteamInputApi.ActionButtons, buttons, 16);
-                    snap.Buttons = buttons;
-                    snap.LeftX = SteamInputApi.ActionLeftX;
-                    snap.LeftY = SteamInputApi.ActionLeftY;
-                    snap.RightX = SteamInputApi.ActionRightX;
-                    snap.RightY = SteamInputApi.ActionRightY;
-                    snap.LeftTrigger = SteamInputApi.ActionButtons[(int)GPadButton.LT] ? 1f : 0f;
-                    snap.RightTrigger = SteamInputApi.ActionButtons[(int)GPadButton.RT] ? 1f : 0f;
+                    // Живые действия Steam Input — приоритетный источник (надёжнее чтения
+                    // эмуляции через MonoGame/XInput): кнопки/оси из наших действий,
+                    // недостающие компоненты добираем из эмулированного пада.
+                    if (SteamInputApi.ActionsAlive)
+                    {
+                        ApplySteamActions(ref snap);
+                    }
+                    else if (!snap.IsConnected)
+                    {
+                        // виртуального пада нет (клавиатурно-мышиный шаблон) — пробуем действия как есть
+                        ApplySteamActions(ref snap);
+                        if (!SteamInputApi.ActionsAlive) { snap.IsConnected = false; }
+                    }
                 }
 
                 if (SteamInputApi.MotionAvailable)
@@ -67,6 +69,37 @@ namespace GamePadInput
                 }
             }
             return snap;
+        }
+
+        private static void ApplySteamActions(ref PadSnapshot snap)
+        {
+            bool innerConnected = snap.IsConnected;
+            bool[] innerButtons = snap.Buttons;
+
+            bool[] buttons = new bool[16];
+            bool[] steamButtons = SteamInputApi.ActionButtons;
+            for (int i = 0; i < 16; i++)
+            {
+                buttons[i] = SteamInputApi.IsDigitalBound(i)
+                    ? steamButtons[i]
+                    : (innerConnected && innerButtons != null && innerButtons.Length == 16 && innerButtons[i]);
+            }
+            snap.Buttons = buttons;
+            snap.LeftTrigger = buttons[(int)GPadButton.LT] ? 1f : 0f;
+            snap.RightTrigger = buttons[(int)GPadButton.RT] ? 1f : 0f;
+
+            if (SteamInputApi.HasLeftStickAction)
+            {
+                snap.LeftX = SteamInputApi.ActionLeftX;
+                snap.LeftY = SteamInputApi.ActionLeftY;
+            }
+            if (SteamInputApi.HasRightStickAction)
+            {
+                snap.RightX = SteamInputApi.ActionRightX;
+                snap.RightY = SteamInputApi.ActionRightY;
+            }
+            snap.IsConnected = true;
+            snap.SteamActionsInput = true;
         }
 
         public void SetRumble(float strength, float durationSeconds)

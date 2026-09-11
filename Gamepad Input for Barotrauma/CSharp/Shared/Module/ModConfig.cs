@@ -125,6 +125,7 @@ namespace GamePadInput
         public float CursorDeadzone = 0.2f;
         public float MoveThreshold = 0.5f;
         public float CursorRadius = 175f;
+        public bool StickSwap = true; // true = в меню стики меняются местами (левый = курсор); false = левый всегда движение, правый всегда курсор
         public bool VibrationEnabled = true;
         public float VibrationDuration = 0.5f;
         public bool GyroEnabled = false;
@@ -175,6 +176,7 @@ namespace GamePadInput
             CursorDeadzone = 0.2f;
             MoveThreshold = 0.5f;
             CursorRadius = 175f;
+            StickSwap = true;
             VibrationEnabled = true;
             VibrationDuration = 0.5f;
             GyroEnabled = false;
@@ -202,6 +204,7 @@ namespace GamePadInput
                         config.CursorDeadzone = GetFloat(root, "CursorDeadzone", config.CursorDeadzone);
                         config.MoveThreshold = GetFloat(root, "MoveThreshold", config.MoveThreshold);
                         config.CursorRadius = GetFloat(root, "CursorRadius", config.CursorRadius);
+                        config.StickSwap = GetBool(root, "StickSwap", config.StickSwap);
                         config.VibrationEnabled = GetBool(root, "VibrationEnabled", config.VibrationEnabled);
                         config.VibrationDuration = GetFloat(root, "VibrationDuration", config.VibrationDuration);
                         config.GyroEnabled = GetBool(root, "GyroEnabled", config.GyroEnabled);
@@ -252,6 +255,7 @@ namespace GamePadInput
                     new XElement("CursorDeadzone", CursorDeadzone.ToString(CultureInfo.InvariantCulture)),
                     new XElement("MoveThreshold", MoveThreshold.ToString(CultureInfo.InvariantCulture)),
                     new XElement("CursorRadius", CursorRadius.ToString(CultureInfo.InvariantCulture)),
+                    new XElement("StickSwap", StickSwap),
                     new XElement("VibrationEnabled", VibrationEnabled),
                     new XElement("VibrationDuration", VibrationDuration.ToString(CultureInfo.InvariantCulture)),
                     new XElement("GyroEnabled", GyroEnabled),
